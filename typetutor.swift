@@ -242,6 +242,7 @@ struct ExerciseView: View {
     @State private var errorCount: Int = 0
     @State private var startTime: Date? = nil
     @State private var currentTime = Date()
+    @State private var mistakeLog: [String: Int] = [:]
     @State private var isFinished = false
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     var body: some View {
@@ -253,20 +254,30 @@ struct ExerciseView: View {
         .padding().frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(appState.currentTheme.backgroundColor.color.ignoresSafeArea())
         .background(KeyCaptureView { input in handleInput(input) })
-        .onAppear { typedText = Array(repeating: nil, count: textChars.count) }
+        .onAppear {
+            typedText = Array(repeating: nil, count: textChars.count)
+            mistakeLog = [:]
+        }
         .onReceive(timer) { newTime in guard !isFinished else { return }; if startTime != nil { currentTime = newTime } }
     }
     private func handleInput(_ input: String) {
         guard !isFinished, let typedChar = input.first else { return }; if startTime == nil { startTime = Date() }
         let correctChar = textChars[currentIndex]; var isMatch = (typedChar == correctChar)
         if correctChar.isNewline && (typedChar == "\r" || typedChar == "\n") { isMatch = true }
-        if isMatch { typedText[currentIndex] = correctChar; if currentIndex < textChars.count-1 { currentIndex += 1 } else { finishExercise() }
-        } else { if typedText[currentIndex] == nil { errorCount += 1 }; typedText[currentIndex] = typedChar }
+        if isMatch {
+            typedText[currentIndex] = correctChar; if currentIndex < textChars.count-1 { currentIndex += 1 } else { finishExercise() }
+        } else {
+            if typedText[currentIndex] == nil {
+                errorCount += 1
+                let key = correctChar.isNewline ? "⏎" : String(correctChar)
+                mistakeLog[key, default: 0] += 1
+            }; typedText[currentIndex] = typedChar
+        }
     }
     private func finishExercise() {
         isFinished = true; let finalTime = Date(), elapsed = finalTime.timeIntervalSince(startTime!); let cpm = Int(Double(textChars.count)/elapsed*60), wpm = cpm/5
         let errPercent = Double(errorCount)/Double(textChars.count)*100; self.currentTime = finalTime
-        let h=HistoryEntry(id:UUID(), exerciseId:exercise.id, exerciseName:exercise.name, exerciseLength:textChars.count, completionDate:finalTime, charactersPerMinute:cpm, wordsPerMinute:wpm, errorPercentage:errPercent, totalErrors:errorCount, topMistakes:[:])
+        let h=HistoryEntry(id:UUID(), exerciseId:exercise.id, exerciseName:exercise.name, exerciseLength:textChars.count, completionDate:finalTime, charactersPerMinute:cpm, wordsPerMinute:wpm, errorPercentage:errPercent, totalErrors:errorCount, topMistakes:mistakeLog)
         appState.addHistoryEntry(h)
     }
 }
@@ -362,7 +373,25 @@ struct ProgressView: View {
     private var history: [HistoryEntry] { appState.history.sorted{$0.completionDate < $1.completionDate} }
     var body: some View { VStack { Text("Progress").font(.largeTitle).padding(); if history.isEmpty { Spacer(); Text("No history yet.").font(.title2); Spacer() } else {
         Chart(history){e in LineMark(x:.value("Date",e.completionDate,unit:.day), y:.value("CPM",e.charactersPerMinute)).foregroundStyle(by:.value("Metric","CPM")); LineMark(x:.value("Date",e.completionDate,unit:.day), y:.value("Error %",e.errorPercentage)).foregroundStyle(by:.value("Metric","Error %")) }.chartForegroundStyleScale(["CPM":.blue, "Error %":.red]).padding()
-        List(history.reversed()){e in HStack{ VStack(alignment:.leading){Text(e.exerciseName).font(.headline); Text(e.completionDate.formatted(date:.abbreviated,time:.shortened)).font(.caption)}; Spacer(); Text("CPM:\(e.charactersPerMinute)").font(.callout).monospacedDigit(); Text("Err:\(String(format:"%.1f",e.errorPercentage))%").font(.callout).monospacedDigit() }}
+        List(history.reversed()) { e in
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(e.exerciseName).font(.headline)
+                    Text(e.completionDate.formatted(date: .abbreviated, time: .shortened)).font(.caption)
+                    if !e.topMistakes.isEmpty {
+                        let sortedMistakes = e.topMistakes.sorted { $0.value > $1.value }.prefix(3)
+                        HStack(spacing: 8) {
+                            Text("Mistakes:").font(.headline)
+                            ForEach(Array(sortedMistakes), id: \.key) { mistake in
+                                Text("'\(mistake.key)' (\(mistake.value))").font(.headline).padding(.horizontal, 5).padding(.vertical, 2).foregroundColor(appState.currentTheme.incorrectTextColor.color).background(Color.secondary.opacity(0.15)).cornerRadius(4)
+                            }
+                        }.padding(.top, 2)
+                    }
+                }
+                Spacer()
+                VStack(alignment: .trailing) { Text("CPM: \(e.charactersPerMinute)").font(.callout).monospacedDigit(); Text("Err: \(String(format:"%.1f", e.errorPercentage))%").font(.callout).monospacedDigit() }
+            }
+        }
     }; HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }.padding() }.frame(minWidth:800, minHeight:600) }
 }
 
