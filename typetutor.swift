@@ -71,6 +71,7 @@ struct MainView: View {
     @EnvironmentObject var appState: AppState
     // FIX: Corrected @State declarations
     @State private var sheetContent: SheetContent? = nil
+    @State private var exerciseToRename: Exercise? = nil
     @State private var exerciseToEdit: Exercise? = nil
     
     enum SheetContent: Identifiable {
@@ -84,9 +85,12 @@ struct MainView: View {
                 NavigationLink(value: e) { ExerciseRowView(exercise: e) }
                 .contextMenu {
                     Button("Edit") { exerciseToEdit = e }
-                    Button("Rename") { rename(e) }
+                    Button("Rename") { exerciseToRename = e }
                     Button("Delete", role: .destructive) { appState.deleteExercise(e) }
                 }
+            }
+            .popover(item: $exerciseToRename) { exercise in
+                RenameView(exercise: exercise)
             }
             .navigationTitle("Typing Exercises").navigationDestination(for: Exercise.self) { e in ExerciseView(exercise: e) }
             .toolbar { ToolbarItemGroup(placement: .primaryAction) {
@@ -116,14 +120,6 @@ struct MainView: View {
             }
         }
         .preferredColorScheme(appState.currentTheme.backgroundColor.color.isDark() ? .dark : .light)
-    }
-    
-    private func rename(_ e: Exercise) {
-        let alert = NSAlert(); alert.messageText = "Rename"; alert.informativeText = "New name for \"\(e.name)\":"
-        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x:0,y:0,width:200,height:24)); field.stringValue = e.name
-        alert.accessoryView = field
-        if alert.runModal() == .alertFirstButtonReturn { var u=e; u.name=field.stringValue; appState.updateExercise(u) }
     }
     
     private func importFromFile() {
@@ -195,6 +191,34 @@ struct ExerciseEditorView: View {
                 if self.exercise.name.isEmpty { self.exercise.name = url.deletingPathExtension().lastPathComponent }
             } catch { print("Error reading file: \(error)") }
         }
+    }
+}
+
+struct RenameView: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) var dismiss
+    @FocusState private var isFocused: Bool
+    
+    let exercise: Exercise
+    @State private var newName: String = ""
+
+    init(exercise: Exercise) {
+        self.exercise = exercise
+        _newName = State(initialValue: exercise.name)
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Rename Exercise").font(.headline)
+            TextField("New Name", text: $newName)
+                .focused($isFocused)
+            HStack {
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save") {
+                    var updatedExercise = exercise; updatedExercise.name = newName.trimmingCharacters(in: .whitespaces); appState.updateExercise(updatedExercise); dismiss()
+                }.disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty || newName == exercise.name)
+            }
+        }.padding().frame(width: 300).onAppear { isFocused = true }
     }
 }
 
@@ -303,7 +327,7 @@ struct SettingsView: View {
             Text("Settings").font(.largeTitle).padding()
             HSplitView { themeList.frame(minWidth: 150, maxWidth: 250); themeEditor.frame(maxWidth: .infinity) }
             HStack { Button("Cancel", role: .cancel) { dismiss() }; Button("Save") { appState.configuration = currentConfig; appState.configuration.lastUsedThemeId = selectedThemeId; appState.saveConfig(); dismiss() } }.padding()
-        }.frame(minWidth: 700, minHeight: 450)
+        }.frame(minWidth: 700, minHeight: 550)
     }
     
     var themeList: some View { VStack { List(currentConfig.themes, selection:$selectedThemeId){t in Text(t.name).tag(t.id)}; HStack{Button(action:add){Image(systemName:"plus")}; Button(action:delete){Image(systemName:"minus")}.disabled(currentConfig.themes.count<=1)}.padding(.bottom,8) }}
