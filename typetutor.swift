@@ -117,16 +117,23 @@ struct MainView: View {
 
     // NEW: Function to open the editor in a new window
     private func openExerciseEditor(for exercise: Exercise?) {
-        let exerciseToEdit = exercise ?? Exercise(id: UUID(), name: "", text: "")
+        let newExerciseId = UUID() // Generate ID for new exercises to ensure it's consistent for logging
+        let exerciseToEdit = exercise ?? Exercise(id: newExerciseId, name: "", text: "")
+        let idForLog = exerciseToEdit.id // Use this ID for all logs in this function call
+
+        print("[LOG MainView.openExerciseEditor] Entry point. Exercise ID: \(idForLog). Is new? \(exercise == nil). Name: '\(exerciseToEdit.name)'")
         
         // If a window for this exercise is already open, bring it to the front
-        if let window = appState.editorWindows[exerciseToEdit.id] {
+        if let window = appState.editorWindows[idForLog] {
+            print("[LOG MainView.openExerciseEditor] Window already exists for ID \(idForLog). Making key and ordering front.")
             window.makeKeyAndOrderFront(nil)
             return
         }
+        print("[LOG MainView.openExerciseEditor] No existing window found for ID \(idForLog). Creating new window.")
 
         // Create the editor view. It now manages its own state, fixing the crash.
-        let editorView = ExerciseEditorView(exercise: exerciseToEdit)
+        let editorView = ExerciseEditorView(exercise: exerciseToEdit) // exerciseToEdit now has a stable ID if it was new
+        print("[LOG MainView.openExerciseEditor] ExerciseEditorView created for ID \(idForLog).")
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 450),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -139,17 +146,24 @@ struct MainView: View {
         window.contentView = NSHostingView(rootView: editorView.environmentObject(appState))
         
         // Keep track of the window
+        print("[LOG MainView.openExerciseEditor] Adding window for exercise ID \(exerciseToEdit.id) to appState.editorWindows.")
         appState.editorWindows[exerciseToEdit.id] = window
         
         // NEW: Proper handling of window close notification
         let cancellable = NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)
             .sink { [weak appState] _ in
-                appState?.editorWindows.removeValue(forKey: exerciseToEdit.id)
-                appState?.editorCancellables.removeValue(forKey: exerciseToEdit.id)
+                print("[LOG MainView.openExerciseEditor] NSWindow.willCloseNotification received for exercise ID \(exerciseToEdit.id).")
+                let removedWindow = appState?.editorWindows.removeValue(forKey: exerciseToEdit.id)
+                print("[LOG MainView.openExerciseEditor] Removed window from appState.editorWindows for ID \(exerciseToEdit.id): \(removedWindow != nil)")
+                let removedCancellable = appState?.editorCancellables.removeValue(forKey: exerciseToEdit.id)
+                print("[LOG MainView.openExerciseEditor] Removed cancellable from appState.editorCancellables for ID \(exerciseToEdit.id): \(removedCancellable != nil)")
             }
-        appState.editorCancellables[exerciseToEdit.id] = cancellable
+        print("[LOG MainView.openExerciseEditor] Adding cancellable for exercise ID \(exerciseToEdit.id) to appState.editorCancellables.")
+        appState.editorCancellables[idForLog] = cancellable // Use idForLog
         
+        print("[LOG MainView.openExerciseEditor] About to make window key and order front for ID \(idForLog).")
         window.makeKeyAndOrderFront(nil)
+        print("[LOG MainView.openExerciseEditor] Finished openExerciseEditor for ID \(idForLog).")
     }
     
     private func importFromFile() {
@@ -187,25 +201,38 @@ struct ExerciseEditorView: View {
 
     init(exercise: Exercise) {
         _exercise = State(initialValue: exercise)
-        // Initialize the buffer with the exercise's text
         _bufferedText = State(initialValue: exercise.text)
-        // Determine if it's new by checking if it exists in the appState
-        let appState = (NSApplication.shared.delegate as! AppDelegate).appState
-        self.isNew = !appState.exercises.contains(where: { $0.id == exercise.id })
+
+        // This part for determining `isNew` might be tricky if appState isn't fully available.
+        // Let's rely on the one passed from MainView or assume new if name is empty as a proxy for logging.
+        // The original logic for `isNew` is kept for functionality.
+        let tempAppState = (NSApplication.shared.delegate as! AppDelegate).appState
+        self.isNew = !tempAppState.exercises.contains(where: { $0.id == exercise.id })
+        print("[LOG ExerciseEditorView.init] Initialized for exercise ID \(exercise.id), Name: '\(exercise.name)', IsNew: \(self.isNew). BufferedText length: \(exercise.text.count)")
     }
 
     private func closeWindow() {
-        // Retrieve the window instance using the view's exercise.id
+        print("[LOG ExerciseEditorView.closeWindow] Entry point for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
+
         let windowToClose = appState.editorWindows[self.exercise.id]
+        if windowToClose != nil {
+            print("[LOG ExerciseEditorView.closeWindow] Window found in appState.editorWindows for ID \(self.exercise.id).")
+        } else {
+            print("[LOG ExerciseEditorView.closeWindow] WARNING: No window found in appState.editorWindows for ID \(self.exercise.id).")
+        }
 
-        // Remove the window from AppState's tracking
-        appState.editorWindows.removeValue(forKey: self.exercise.id)
+        print("[LOG ExerciseEditorView.closeWindow] Removing window from appState.editorWindows for ID \(self.exercise.id).")
+        let removedWindow = appState.editorWindows.removeValue(forKey: self.exercise.id)
+        print("[LOG ExerciseEditorView.closeWindow] Window removal from appState.editorWindows success: \(removedWindow != nil).")
 
-        // Remove and explicitly cancel the notification cancellable from AppState's tracking
-        appState.editorCancellables.removeValue(forKey: self.exercise.id)?.cancel()
+        print("[LOG ExerciseEditorView.closeWindow] Removing and cancelling cancellable from appState.editorCancellables for ID \(self.exercise.id).")
+        let removedCancellable = appState.editorCancellables.removeValue(forKey: self.exercise.id)
+        removedCancellable?.cancel()
+        print("[LOG ExerciseEditorView.closeWindow] Cancellable removal from appState.editorCancellables success: \(removedCancellable != nil). Cancel called if present.")
 
-        // After cleanup in AppState, tell the window to close
+        print("[LOG ExerciseEditorView.closeWindow] Calling windowToClose.close() for ID \(self.exercise.id).")
         windowToClose?.close()
+        print("[LOG ExerciseEditorView.closeWindow] Finished for ID \(self.exercise.id).")
     }
     
     var body: some View {
@@ -213,27 +240,39 @@ struct ExerciseEditorView: View {
             Text(isNew ? "Add New Exercise" : "Edit Exercise").font(.largeTitle).padding([.top, .leading, .trailing])
             Form {
                 TextField("Exercise Name", text: $exercise.name)
-                // MODIFIED: Bind to the buffered text state
                 TextEditor(text: $bufferedText).font(.custom("Menlo", size: 14)).frame(minHeight: 300, maxHeight: .infinity).border(Color.secondary.opacity(0.5))
                 Button("Import Text from File...") { importText() }
             }.padding()
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { closeWindow() }
+                Button("Cancel", role: .cancel) {
+                    print("[LOG ExerciseEditorView.CancelButton] Tapped for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
+                    closeWindow()
+                }
                 Button("Save") {
-                    // MODIFIED: Update the exercise text from the buffer before saving
+                    print("[LOG ExerciseEditorView.SaveButton] Tapped for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
                     exercise.text = bufferedText.normalizingApostrophes()
+                    print("[LOG ExerciseEditorView.SaveButton] Exercise text updated from buffer. IsNew: \(isNew).")
                     if isNew {
+                        print("[LOG ExerciseEditorView.SaveButton] Adding new exercise to appState.")
                         appState.addExercise(exercise)
                     } else {
+                        print("[LOG ExerciseEditorView.SaveButton] Updating existing exercise in appState.")
                         appState.updateExercise(exercise)
                     }
+                    print("[LOG ExerciseEditorView.SaveButton] Calling closeWindow for exercise ID \(exercise.id).")
                     closeWindow()
-                // MODIFIED: The disabled check now uses the buffered text and trims whitespace
                 }.disabled(exercise.name.trimmingCharacters(in: .whitespaces).isEmpty || bufferedText.isEmpty)
             }.padding([.bottom, .leading, .trailing])
-        }.frame(minWidth: 600, minHeight: 450)
-         .onChange(of: controlActiveState) { newState in
+        }
+        .frame(minWidth: 600, minHeight: 450)
+        .onAppear {
+            print("[LOG ExerciseEditorView.onAppear] Appeared for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
+        }
+        .onDisappear {
+            print("[LOG ExerciseEditorView.onDisappear] Disappeared for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
+        }
+        .onChange(of: controlActiveState) { newState in
             // A trick to update the window title when the name changes
             if let window = appState.editorWindows[exercise.id] {
                 window.title = isNew ? "New Exercise" : "Edit: \(exercise.name)"
@@ -286,13 +325,51 @@ struct RenameView: View {
 
 struct KeyCaptureView: NSViewRepresentable {
     var onKeyPress: (String) -> Void
-    func makeNSView(context: Context) -> NSKeyCaptureView { let v = NSKeyCaptureView(); v.onKeyPress = onKeyPress; return v }
-    func updateNSView(_ nsView: NSKeyCaptureView, context: Context) {}
+    func makeNSView(context: Context) -> NSKeyCaptureView {
+        print("[LOG KeyCaptureView.makeNSView] Creating NSKeyCaptureView.")
+        let v = NSKeyCaptureView()
+        v.onKeyPress = onKeyPress
+        return v
+    }
+    func updateNSView(_ nsView: NSKeyCaptureView, context: Context) {
+        // print("[LOG KeyCaptureView.updateNSView] Called.") // Can be very noisy
+    }
 }
+
 class NSKeyCaptureView: NSView {
-    var onKeyPress: ((String) -> Void)?; override var acceptsFirstResponder: Bool { true }
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); self.window?.makeFirstResponder(self) }
-    override func keyDown(with event: NSEvent) { guard let chars = event.characters else { return }; onKeyPress?(chars) }
+    var onKeyPress: ((String) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        print("[LOG NSKeyCaptureView.init(frame:)] Initialized.")
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        print("[LOG NSKeyCaptureView.init(coder:)] Initialized.")
+    }
+
+    deinit {
+        print("[LOG NSKeyCaptureView.deinit] Deinitializing NSKeyCaptureView.")
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if self.window != nil {
+            print("[LOG NSKeyCaptureView.viewDidMoveToWindow] Moved to window. Attempting to make first responder.")
+            self.window?.makeFirstResponder(self)
+        } else {
+            print("[LOG NSKeyCaptureView.viewDidMoveToWindow] Moved out of window (window is nil).")
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard let chars = event.characters else { return }
+        print("[LOG NSKeyCaptureView.keyDown] Key pressed: '\(chars.replacingOccurrences(of: "\r", with: "⏎").replacingOccurrences(of: "\n", with: "⏎"))'")
+        onKeyPress?(chars)
+    }
 }
 
 struct ExerciseView: View {
@@ -454,18 +531,44 @@ struct ProgressView: View {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor let appState = AppState()
-    var window: NSWindow!
+    var window: NSWindow! // This is the main application window, not the editor window.
+
     func applicationDidFinishLaunching(_ n: Notification) {
+        print("[LOG AppDelegate.applicationDidFinishLaunching] Application has finished launching.")
         NSApp.setActivationPolicy(.regular)
+
+        print("[LOG AppDelegate.applicationDidFinishLaunching] Creating MainView and main NSWindow.")
         let view = MainView().environmentObject(appState)
         window = NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600), styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered, defer:false)
         window.center(); window.setFrameAutosaveName("MainAppWindow")
-        window.contentView = NSHostingView(rootView: view); window.makeKeyAndOrderFront(nil)
+        window.contentView = NSHostingView(rootView: view)
+        window.makeKeyAndOrderFront(nil)
+        print("[LOG AppDelegate.applicationDidFinishLaunching] Main window made key and ordered front.")
+
         NSApp.activate(ignoringOtherApps: true)
+        print("[LOG AppDelegate.applicationDidFinishLaunching] NSApp activated.")
     }
-    func applicationWillTerminate(_ n: Notification) { appState.saveConfig() }
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { return true }
+
+    func applicationWillTerminate(_ n: Notification) {
+        print("[LOG AppDelegate.applicationWillTerminate] Application will terminate. Saving configuration.")
+        appState.saveConfig()
+        print("[LOG AppDelegate.applicationWillTerminate] Configuration saved.")
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool {
+        print("[LOG AppDelegate.applicationShouldTerminateAfterLastWindowClosed] Querying if app should terminate: YES.")
+        return true
+    }
 }
+
+// MARK: - 5. APP ENTRY POINT (already has logging indirectly through AppDelegate)
+// No changes needed to the final lines:
+// let delegate = AppDelegate()
+// let app = NSApplication.shared
+// app.delegate = delegate
+// app.run()
+
+
 extension Color {
     func isDark() -> Bool {
         let c = NSColor(self); guard let comps = c.cgColor.components, comps.count >= 3 else { var w:CGFloat=0; c.getWhite(&w,alpha:nil); return w < 0.5 }
