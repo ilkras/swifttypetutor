@@ -117,23 +117,16 @@ struct MainView: View {
 
     // NEW: Function to open the editor in a new window
     private func openExerciseEditor(for exercise: Exercise?) {
-        let newExerciseId = UUID() // Generate ID for new exercises to ensure it's consistent for logging
-        let exerciseToEdit = exercise ?? Exercise(id: newExerciseId, name: "", text: "")
-        let idForLog = exerciseToEdit.id // Use this ID for all logs in this function call
-
-        print("[LOG MainView.openExerciseEditor] Entry point. Exercise ID: \(idForLog). Is new? \(exercise == nil). Name: '\(exerciseToEdit.name)'")
+        let exerciseToEdit = exercise ?? Exercise(id: UUID(), name: "", text: "")
         
         // If a window for this exercise is already open, bring it to the front
-        if let window = appState.editorWindows[idForLog] {
-            print("[LOG MainView.openExerciseEditor] Window already exists for ID \(idForLog). Making key and ordering front.")
+        if let window = appState.editorWindows[exerciseToEdit.id] {
             window.makeKeyAndOrderFront(nil)
             return
         }
-        print("[LOG MainView.openExerciseEditor] No existing window found for ID \(idForLog). Creating new window.")
 
         // Create the editor view. It now manages its own state, fixing the crash.
-        let editorView = ExerciseEditorView(exercise: exerciseToEdit) // exerciseToEdit now has a stable ID if it was new
-        print("[LOG MainView.openExerciseEditor] ExerciseEditorView created for ID \(idForLog).")
+        let editorView = ExerciseEditorView(exercise: exerciseToEdit)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 450),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -146,24 +139,17 @@ struct MainView: View {
         window.contentView = NSHostingView(rootView: editorView.environmentObject(appState))
         
         // Keep track of the window
-        print("[LOG MainView.openExerciseEditor] Adding window for exercise ID \(exerciseToEdit.id) to appState.editorWindows.")
         appState.editorWindows[exerciseToEdit.id] = window
         
         // NEW: Proper handling of window close notification
         let cancellable = NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)
             .sink { [weak appState] _ in
-                print("[LOG MainView.openExerciseEditor] NSWindow.willCloseNotification received for exercise ID \(exerciseToEdit.id).")
-                let removedWindow = appState?.editorWindows.removeValue(forKey: exerciseToEdit.id)
-                print("[LOG MainView.openExerciseEditor] Removed window from appState.editorWindows for ID \(exerciseToEdit.id): \(removedWindow != nil)")
-                let removedCancellable = appState?.editorCancellables.removeValue(forKey: exerciseToEdit.id)
-                print("[LOG MainView.openExerciseEditor] Removed cancellable from appState.editorCancellables for ID \(exerciseToEdit.id): \(removedCancellable != nil)")
+                appState?.editorWindows.removeValue(forKey: exerciseToEdit.id)
+                appState?.editorCancellables.removeValue(forKey: exerciseToEdit.id)
             }
-        print("[LOG MainView.openExerciseEditor] Adding cancellable for exercise ID \(exerciseToEdit.id) to appState.editorCancellables.")
-        appState.editorCancellables[idForLog] = cancellable // Use idForLog
+        appState.editorCancellables[exerciseToEdit.id] = cancellable
         
-        print("[LOG MainView.openExerciseEditor] About to make window key and order front for ID \(idForLog).")
         window.makeKeyAndOrderFront(nil)
-        print("[LOG MainView.openExerciseEditor] Finished openExerciseEditor for ID \(idForLog).")
     }
     
     private func importFromFile() {
@@ -201,38 +187,18 @@ struct ExerciseEditorView: View {
 
     init(exercise: Exercise) {
         _exercise = State(initialValue: exercise)
+        // Initialize the buffer with the exercise's text
         _bufferedText = State(initialValue: exercise.text)
-
-        // This part for determining `isNew` might be tricky if appState isn't fully available.
-        // Let's rely on the one passed from MainView or assume new if name is empty as a proxy for logging.
-        // The original logic for `isNew` is kept for functionality.
-        let tempAppState = (NSApplication.shared.delegate as! AppDelegate).appState
-        self.isNew = !tempAppState.exercises.contains(where: { $0.id == exercise.id })
-        print("[LOG ExerciseEditorView.init] Initialized for exercise ID \(exercise.id), Name: '\(exercise.name)', IsNew: \(self.isNew). BufferedText length: \(exercise.text.count)")
+        // Determine if it's new by checking if it exists in the appState
+        let appState = (NSApplication.shared.delegate as! AppDelegate).appState
+        self.isNew = !appState.exercises.contains(where: { $0.id == exercise.id })
     }
 
     private func closeWindow() {
-        print("[LOG ExerciseEditorView.closeWindow] Entry point for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
-
-        let windowToClose = appState.editorWindows[self.exercise.id]
-        if windowToClose != nil {
-            print("[LOG ExerciseEditorView.closeWindow] Window found in appState.editorWindows for ID \(self.exercise.id).")
-        } else {
-            print("[LOG ExerciseEditorView.closeWindow] WARNING: No window found in appState.editorWindows for ID \(self.exercise.id).")
+        // Find the window this view is in and close it
+        if let window = appState.editorWindows[exercise.id] {
+           window.close()
         }
-
-        print("[LOG ExerciseEditorView.closeWindow] Removing window from appState.editorWindows for ID \(self.exercise.id).")
-        let removedWindow = appState.editorWindows.removeValue(forKey: self.exercise.id)
-        print("[LOG ExerciseEditorView.closeWindow] Window removal from appState.editorWindows success: \(removedWindow != nil).")
-
-        print("[LOG ExerciseEditorView.closeWindow] Removing and cancelling cancellable from appState.editorCancellables for ID \(self.exercise.id).")
-        let removedCancellable = appState.editorCancellables.removeValue(forKey: self.exercise.id)
-        removedCancellable?.cancel()
-        print("[LOG ExerciseEditorView.closeWindow] Cancellable removal from appState.editorCancellables success: \(removedCancellable != nil). Cancel called if present.")
-
-        print("[LOG ExerciseEditorView.closeWindow] Calling windowToClose.close() for ID \(self.exercise.id).")
-        windowToClose?.close()
-        print("[LOG ExerciseEditorView.closeWindow] Finished for ID \(self.exercise.id).")
     }
     
     var body: some View {
@@ -240,39 +206,27 @@ struct ExerciseEditorView: View {
             Text(isNew ? "Add New Exercise" : "Edit Exercise").font(.largeTitle).padding([.top, .leading, .trailing])
             Form {
                 TextField("Exercise Name", text: $exercise.name)
+                // MODIFIED: Bind to the buffered text state
                 TextEditor(text: $bufferedText).font(.custom("Menlo", size: 14)).frame(minHeight: 300, maxHeight: .infinity).border(Color.secondary.opacity(0.5))
                 Button("Import Text from File...") { importText() }
             }.padding()
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) {
-                    print("[LOG ExerciseEditorView.CancelButton] Tapped for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
-                    closeWindow()
-                }
+                Button("Cancel", role: .cancel) { closeWindow() }
                 Button("Save") {
-                    print("[LOG ExerciseEditorView.SaveButton] Tapped for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
+                    // MODIFIED: Update the exercise text from the buffer before saving
                     exercise.text = bufferedText.normalizingApostrophes()
-                    print("[LOG ExerciseEditorView.SaveButton] Exercise text updated from buffer. IsNew: \(isNew).")
                     if isNew {
-                        print("[LOG ExerciseEditorView.SaveButton] Adding new exercise to appState.")
                         appState.addExercise(exercise)
                     } else {
-                        print("[LOG ExerciseEditorView.SaveButton] Updating existing exercise in appState.")
                         appState.updateExercise(exercise)
                     }
-                    print("[LOG ExerciseEditorView.SaveButton] Calling closeWindow for exercise ID \(exercise.id).")
                     closeWindow()
+                // MODIFIED: The disabled check now uses the buffered text and trims whitespace
                 }.disabled(exercise.name.trimmingCharacters(in: .whitespaces).isEmpty || bufferedText.isEmpty)
             }.padding([.bottom, .leading, .trailing])
-        }
-        .frame(minWidth: 600, minHeight: 450)
-        .onAppear {
-            print("[LOG ExerciseEditorView.onAppear] Appeared for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
-        }
-        .onDisappear {
-            print("[LOG ExerciseEditorView.onDisappear] Disappeared for exercise ID \(exercise.id), Name: '\(exercise.name)'.")
-        }
-        .onChange(of: controlActiveState) { newState in
+        }.frame(minWidth: 600, minHeight: 450)
+         .onChange(of: controlActiveState) { newState in
             // A trick to update the window title when the name changes
             if let window = appState.editorWindows[exercise.id] {
                 window.title = isNew ? "New Exercise" : "Edit: \(exercise.name)"
@@ -325,51 +279,13 @@ struct RenameView: View {
 
 struct KeyCaptureView: NSViewRepresentable {
     var onKeyPress: (String) -> Void
-    func makeNSView(context: Context) -> NSKeyCaptureView {
-        print("[LOG KeyCaptureView.makeNSView] Creating NSKeyCaptureView.")
-        let v = NSKeyCaptureView()
-        v.onKeyPress = onKeyPress
-        return v
-    }
-    func updateNSView(_ nsView: NSKeyCaptureView, context: Context) {
-        // print("[LOG KeyCaptureView.updateNSView] Called.") // Can be very noisy
-    }
+    func makeNSView(context: Context) -> NSKeyCaptureView { let v = NSKeyCaptureView(); v.onKeyPress = onKeyPress; return v }
+    func updateNSView(_ nsView: NSKeyCaptureView, context: Context) {}
 }
-
 class NSKeyCaptureView: NSView {
-    var onKeyPress: ((String) -> Void)?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        print("[LOG NSKeyCaptureView.init(frame:)] Initialized.")
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        print("[LOG NSKeyCaptureView.init(coder:)] Initialized.")
-    }
-
-    deinit {
-        print("[LOG NSKeyCaptureView.deinit] Deinitializing NSKeyCaptureView.")
-    }
-
-    override var acceptsFirstResponder: Bool { true }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if self.window != nil {
-            print("[LOG NSKeyCaptureView.viewDidMoveToWindow] Moved to window. Attempting to make first responder.")
-            self.window?.makeFirstResponder(self)
-        } else {
-            print("[LOG NSKeyCaptureView.viewDidMoveToWindow] Moved out of window (window is nil).")
-        }
-    }
-
-    override func keyDown(with event: NSEvent) {
-        guard let chars = event.characters else { return }
-        print("[LOG NSKeyCaptureView.keyDown] Key pressed: '\(chars.replacingOccurrences(of: "\r", with: "⏎").replacingOccurrences(of: "\n", with: "⏎"))'")
-        onKeyPress?(chars)
-    }
+    var onKeyPress: ((String) -> Void)?; override var acceptsFirstResponder: Bool { true }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); self.window?.makeFirstResponder(self) }
+    override func keyDown(with event: NSEvent) { guard let chars = event.characters else { return }; onKeyPress?(chars) }
 }
 
 struct ExerciseView: View {
@@ -381,12 +297,13 @@ struct ExerciseView: View {
     @State private var startTime: Date? = nil
     @State private var currentTime = Date()
     @State private var mistakeLog: [String: Int] = [:]
+    @State private var persistentErrorChars: [Int: Character] = [:] // New state for persistent error characters
     @State private var isFinished = false
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     var body: some View {
         VStack(spacing: 20) {
             StatsHeaderView(totalChars:textChars.count, errors:errorCount, typedChars:typedText.compactMap{$0}.count, startTime:startTime, currentTime:currentTime)
-            TypingAreaView(textChars: textChars, typedText: typedText, currentIndex: currentIndex)
+            TypingAreaView(textChars: textChars, typedText: typedText, currentIndex: currentIndex, persistentErrorChars: persistentErrorChars) // Pass new state
             if isFinished { CompletionFooterView() }
         }
         .padding().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -409,6 +326,7 @@ struct ExerciseView: View {
                 errorCount += 1
                 let key = correctChar.isNewline ? "⏎" : String(correctChar)
                 mistakeLog[key, default: 0] += 1
+                persistentErrorChars[currentIndex] = typedChar // Store the incorrect char
             }; typedText[currentIndex] = typedChar
         }
     }
@@ -433,22 +351,95 @@ struct StatsHeaderView: View {
 }
 
 struct TypingAreaView: View {
-    @EnvironmentObject var appState: AppState; let textChars: [Character], typedText: [Character?], currentIndex: Int
+    @EnvironmentObject var appState: AppState
+    let textChars: [Character]
+    let typedText: [Character?]
+    let currentIndex: Int
+    let persistentErrorChars: [Int: Character] // New parameter
+
     var body: some View { ScrollView { Text(buildAttributedString()).padding().frame(maxWidth:.infinity, alignment:.leading).lineSpacing(appState.currentTheme.fontSize * 0.75) }.background(appState.currentTheme.backgroundColor.color.opacity(0.5)).cornerRadius(8) }
+
     private func buildAttributedString() -> AttributedString {
-        var finalString = AttributedString(); let theme = appState.currentTheme
+        var finalString = AttributedString()
+        let theme = appState.currentTheme
+
         for i in 0..<textChars.count {
-            let char = textChars[i]; var displayChar = String(char); var container = AttributeContainer()
-            container.font = .custom(theme.fontName, size: theme.fontSize)
-            if char.isNewline { displayChar = "⏎\n" }; if char == "\t" { displayChar = "→" }; if char.isNewline || char == "\t" { container.foregroundColor = theme.specialCharColor.nsColor }
-            var styledChar = AttributedString(displayChar, attributes: container)
+            // 1. Prepare and append the persistent error character, if any
+            if let errorChar = persistentErrorChars[i] {
+                var errorContainer = AttributeContainer()
+                errorContainer.font = .custom(theme.fontName, size: theme.fontSize * 0.8) // Slightly smaller
+                errorContainer.foregroundColor = theme.incorrectTextColor.nsColor
+                errorContainer.baselineOffset = theme.fontSize * 0.7 // Shift upwards
+
+                let errorAttrString = AttributedString(String(errorChar), attributes: errorContainer) // Changed var to let
+                finalString.append(errorAttrString)
+
+                // Append a carriage return to attempt to overstrike the main character.
+                // This might need adjustment or a different approach if it misbehaves.
+                // The goal is for the main character to draw at the same horizontal position.
+                // A zero-width space might also be an option, or ensuring the error char doesn't affect flow.
+                // For now, let's see how baselineOffset alone works with normal character flow.
+                // If errorChar is "X", and main char is "A", we want "X" above "A".
+                // Prepending it and hoping layout handles the main char correctly is one strategy.
+                // The current approach is to append error, then append main char.
+                // This means the error char will take horizontal space.
+                // To make them visually stack, the error character needs to not advance the line cursor.
+                // This is hard with AttributedString alone.
+                //
+                // Let's try a different structure: build the main char, then if an error exists,
+                // build the error char with a negative kerning or backspace equivalent if possible,
+                // or rely on the visual of baseline offset making it distinct.
+                //
+                // Simpler: just prepend the error char string. The baseline offset is the primary visual cue.
+                // The "overstriking" of *successive errors for the same slot* is handled by the dictionary update.
+                // The "overstriking" of the error char *over the target char* is what's tricky.
+                // What if we make the error char not take space?
+                // No, the prompt said "slightly above ... but still in the boundaries of the same row."
+                // This implies the error char has its own "virtual sub-line" or is an overlay.
+                //
+                // Let's stick to: append error string (it takes space), then append main char string.
+                // The user will see: [error char][main char] where [error char] is shifted up.
+                // This isn't perfect overstriking but is a starting point.
+                // The prompt also said "if there are number of characters typed erroneously in succession,
+                // that they will overstrike each other at the same position." This is handled by the
+                // persistentErrorChars dictionary storing only the *last* error for index i.
+            }
+
+            // 2. Prepare and append the main character
+            let char = textChars[i]
+            var displayChar = String(char)
+            var mainCharContainer = AttributeContainer()
+            mainCharContainer.font = .custom(theme.fontName, size: theme.fontSize)
+
+            if char.isNewline {
+                displayChar = "⏎\n" // The newline here is important for actual line breaking
+            } else if char == "\t" {
+                displayChar = "→"
+            }
+
+            if char.isNewline || char == "\t" {
+                mainCharContainer.foregroundColor = theme.specialCharColor.nsColor
+            }
+
+            var mainStyledChar = AttributedString(displayChar, attributes: mainCharContainer)
+
             if i < typedText.count, let typedChar = typedText[i] {
-                var color = typedChar == char ? theme.correctTextColor.nsColor : theme.incorrectTextColor.nsColor
-                if char.isNewline && (typedChar == "\r" || typedChar == "\n") { color = theme.correctTextColor.nsColor }
-                styledChar.foregroundColor = color
-            } else { if !char.isNewline && char != "\t" { styledChar.foregroundColor = theme.defaultTextColor.nsColor } }
-            if i == currentIndex { styledChar.backgroundColor = theme.cursorColor.nsColor }
-            finalString.append(styledChar)
+                let color = (typedChar == char || (char.isNewline && (typedChar == "\r" || typedChar == "\n"))) ? // Changed var to let
+                            theme.correctTextColor.nsColor :
+                            theme.incorrectTextColor.nsColor
+                mainStyledChar.foregroundColor = color
+            } else {
+                // Only apply default text color if not a special char that already has color
+                if !(char.isNewline || char == "\t") {
+                     mainStyledChar.foregroundColor = theme.defaultTextColor.nsColor
+                }
+            }
+
+            if i == currentIndex {
+                mainStyledChar.backgroundColor = theme.cursorColor.nsColor
+            }
+
+            finalString.append(mainStyledChar)
         }
         return finalString
     }
@@ -531,44 +522,18 @@ struct ProgressView: View {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor let appState = AppState()
-    var window: NSWindow! // This is the main application window, not the editor window.
-
+    var window: NSWindow!
     func applicationDidFinishLaunching(_ n: Notification) {
-        print("[LOG AppDelegate.applicationDidFinishLaunching] Application has finished launching.")
         NSApp.setActivationPolicy(.regular)
-
-        print("[LOG AppDelegate.applicationDidFinishLaunching] Creating MainView and main NSWindow.")
         let view = MainView().environmentObject(appState)
         window = NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600), styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered, defer:false)
         window.center(); window.setFrameAutosaveName("MainAppWindow")
-        window.contentView = NSHostingView(rootView: view)
-        window.makeKeyAndOrderFront(nil)
-        print("[LOG AppDelegate.applicationDidFinishLaunching] Main window made key and ordered front.")
-
+        window.contentView = NSHostingView(rootView: view); window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        print("[LOG AppDelegate.applicationDidFinishLaunching] NSApp activated.")
     }
-
-    func applicationWillTerminate(_ n: Notification) {
-        print("[LOG AppDelegate.applicationWillTerminate] Application will terminate. Saving configuration.")
-        appState.saveConfig()
-        print("[LOG AppDelegate.applicationWillTerminate] Configuration saved.")
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool {
-        print("[LOG AppDelegate.applicationShouldTerminateAfterLastWindowClosed] Querying if app should terminate: YES.")
-        return true
-    }
+    func applicationWillTerminate(_ n: Notification) { appState.saveConfig() }
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { return true }
 }
-
-// MARK: - 5. APP ENTRY POINT (already has logging indirectly through AppDelegate)
-// No changes needed to the final lines:
-// let delegate = AppDelegate()
-// let app = NSApplication.shared
-// app.delegate = delegate
-// app.run()
-
-
 extension Color {
     func isDark() -> Bool {
         let c = NSColor(self); guard let comps = c.cgColor.components, comps.count >= 3 else { var w:CGFloat=0; c.getWhite(&w,alpha:nil); return w < 0.5 }
