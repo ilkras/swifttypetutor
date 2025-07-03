@@ -1,13 +1,14 @@
 #!/usr/bin/swift
 
-// Swift Typing Tutor v2.3
-// Final Implementation: June 29, 2025
-// - Corrects all syntax regressions.
-// - Implements a reliable, searchable SwiftUI Font Family Picker.
+// Swift Typing Tutor v2.4
+// Final Implementation: July 2, 2025
+// - Replaces the modal exercise editor sheet with a separate, resizable window.
+// - Allows for in-place, non-modal editing of new and existing exercises.
 
 import SwiftUI
 import Charts
 import UniformTypeIdentifiers
+import Combine
 
 // MARK: - 1. DATA MODELS
 struct Exercise: Codable, Identifiable, Hashable { var id: UUID, name: String, text: String }
@@ -63,17 +64,19 @@ class AppState: ObservableObject {
     func updateExercise(_ e: Exercise) { if let i = exercises.firstIndex(where: {$0.id==e.id}) { exercises[i]=e; storage.saveExercise(e) } }
     func deleteExercise(_ e: Exercise) { exercises.removeAll{$0.id==e.id}; storage.deleteExercise(e) }
     func addHistoryEntry(_ h: HistoryEntry) { history.append(h); storage.saveHistoryEntry(h) }
+    
+    // NEW: State for managing editor windows, moved here from MainView
+    var editorWindows: [UUID: NSWindow] = [:]
+    var editorCancellables: [UUID: AnyCancellable] = [:]
 }
 
 // MARK: - 4. UI VIEWS
 
 struct MainView: View {
     @EnvironmentObject var appState: AppState
-    // FIX: Corrected @State declarations
     @State private var sheetContent: SheetContent? = nil
     @State private var exerciseToRename: Exercise? = nil
-    @State private var exerciseToEdit: Exercise? = nil
-    
+
     enum SheetContent: Identifiable {
         case settings, progress
         var id: Self { self }
@@ -84,7 +87,8 @@ struct MainView: View {
             List($appState.exercises) { $e in
                 NavigationLink(value: e) { ExerciseRowView(exercise: e) }
                 .contextMenu {
-                    Button("Edit") { exerciseToEdit = e }
+                    // MODIFIED: Call the new window function
+                    Button("Edit") { openExerciseEditor(for: e) }
                     Button("Rename") { exerciseToRename = e }
                     Button("Delete", role: .destructive) { appState.deleteExercise(e) }
                 }
@@ -95,24 +99,13 @@ struct MainView: View {
             .navigationTitle("Typing Exercises").navigationDestination(for: Exercise.self) { e in ExerciseView(exercise: e) }
             .toolbar { ToolbarItemGroup(placement: .primaryAction) {
                 Button(action: importFromFile) { Label("Import", systemImage: "square.and.arrow.down") }
-                Button(action: { exerciseToEdit = Exercise(id: UUID(), name: "", text: "") }) { Label("Add", systemImage: "plus") }
+                // MODIFIED: Call the new window function for a new exercise
+                Button(action: { openExerciseEditor(for: nil) }) { Label("Add", systemImage: "plus") }
                 Button(action: { sheetContent = .settings }) { Label("Settings", systemImage: "gear") }
                 Button(action: { sheetContent = .progress }) { Label("Progress", systemImage: "chart.bar.xaxis") }
             }}
         }
-        .sheet(item: $exerciseToEdit) { exercise in
-            // We pass a binding to the editor
-            if let index = appState.exercises.firstIndex(where: { $0.id == exercise.id }) {
-                ExerciseEditorView(exerciseBinding: $appState.exercises[index])
-            } else {
-                // For a new exercise, we use a temporary state binding
-                var tempExercise = exercise
-                ExerciseEditorView(exerciseBinding: Binding(
-                    get: { tempExercise },
-                    set: { newExercise in tempExercise = newExercise }
-                ))
-            }
-        }
+        // REMOVED: .sheet(item: $exerciseToEdit) { ... }
         .sheet(item: $sheetContent) { content in
             switch content {
             case .settings: SettingsView(appState: appState)
@@ -120,6 +113,43 @@ struct MainView: View {
             }
         }
         .preferredColorScheme(appState.currentTheme.backgroundColor.color.isDark() ? .dark : .light)
+    }
+
+    // NEW: Function to open the editor in a new window
+    private func openExerciseEditor(for exercise: Exercise?) {
+        let exerciseToEdit = exercise ?? Exercise(id: UUID(), name: "", text: "")
+        
+        // If a window for this exercise is already open, bring it to the front
+        if let window = appState.editorWindows[exerciseToEdit.id] {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        // Create the editor view. It now manages its own state, fixing the crash.
+        let editorView = ExerciseEditorView(exercise: exerciseToEdit)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 450),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false)
+        window.center()
+        window.title = exercise == nil ? "New Exercise" : "Edit: \(exerciseToEdit.name)"
+        
+        // Add a hosting view with the editor
+        window.contentView = NSHostingView(rootView: editorView.environmentObject(appState))
+        
+        // Keep track of the window
+        appState.editorWindows[exerciseToEdit.id] = window
+        
+        // NEW: Proper handling of window close notification
+        let cancellable = NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)
+            .sink { [weak appState] _ in
+                appState?.editorWindows.removeValue(forKey: exerciseToEdit.id)
+                appState?.editorCancellables.removeValue(forKey: exerciseToEdit.id)
+            }
+        appState.editorCancellables[exerciseToEdit.id] = cancellable
+        
+        window.makeKeyAndOrderFront(nil)
     }
     
     private func importFromFile() {
@@ -129,7 +159,8 @@ struct MainView: View {
             do {
                 let content = try String(contentsOf: url, encoding: .utf8)
                 let name = url.deletingPathExtension().lastPathComponent
-                exerciseToEdit = Exercise(id: UUID(), name: name, text: content)
+                // MODIFIED: Open in the new editor window
+                openExerciseEditor(for: Exercise(id: UUID(), name: name, text: content))
             } catch { print("Error reading file: \(error)") }
         }
     }
@@ -146,39 +177,61 @@ struct ExerciseRowView: View {
 
 struct ExerciseEditorView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.dismiss) var dismiss // Still useful if view is ever in a sheet again
+    @Environment(\.controlActiveState) var controlActiveState // To find the window
     
-    @Binding var exercise: Exercise
+    @State private var exercise: Exercise
     private let isNew: Bool
-    
-    init(exerciseBinding: Binding<Exercise>) {
-        self._exercise = exerciseBinding
+    // NEW: A separate state for the text editor to avoid potential binding issues.
+    @State private var bufferedText: String
+
+    init(exercise: Exercise) {
+        _exercise = State(initialValue: exercise)
+        // Initialize the buffer with the exercise's text
+        _bufferedText = State(initialValue: exercise.text)
+        // Determine if it's new by checking if it exists in the appState
         let appState = (NSApplication.shared.delegate as! AppDelegate).appState
-        self.isNew = !appState.exercises.contains(where: { $0.id == exerciseBinding.wrappedValue.id })
+        self.isNew = !appState.exercises.contains(where: { $0.id == exercise.id })
     }
 
+    private func closeWindow() {
+        // Find the window this view is in and close it
+        if let window = appState.editorWindows[exercise.id] {
+           window.close()
+        }
+    }
+    
     var body: some View {
         VStack(alignment: .leading) {
             Text(isNew ? "Add New Exercise" : "Edit Exercise").font(.largeTitle).padding([.top, .leading, .trailing])
             Form {
                 TextField("Exercise Name", text: $exercise.name)
-                TextEditor(text: $exercise.text).font(.custom("Menlo", size: 14)).frame(minHeight: 300, maxHeight: .infinity).border(.secondary)
+                // MODIFIED: Bind to the buffered text state
+                TextEditor(text: $bufferedText).font(.custom("Menlo", size: 14)).frame(minHeight: 300, maxHeight: .infinity).border(Color.secondary.opacity(0.5))
                 Button("Import Text from File...") { importText() }
             }.padding()
             HStack {
-                Spacer(); Button("Cancel", role: .cancel) { dismiss() }
+                Spacer()
+                Button("Cancel", role: .cancel) { closeWindow() }
                 Button("Save") {
-                    // Normalize apostrophes before saving.
-                    exercise.text = exercise.text.normalizingApostrophes()
+                    // MODIFIED: Update the exercise text from the buffer before saving
+                    exercise.text = bufferedText.normalizingApostrophes()
                     if isNew {
                         appState.addExercise(exercise)
                     } else {
                         appState.updateExercise(exercise)
                     }
-                    dismiss()
-                }.disabled(exercise.name.isEmpty || exercise.text.isEmpty)
+                    closeWindow()
+                // MODIFIED: The disabled check now uses the buffered text and trims whitespace
+                }.disabled(exercise.name.trimmingCharacters(in: .whitespaces).isEmpty || bufferedText.isEmpty)
             }.padding([.bottom, .leading, .trailing])
         }.frame(minWidth: 600, minHeight: 450)
+         .onChange(of: controlActiveState) { newState in
+            // A trick to update the window title when the name changes
+            if let window = appState.editorWindows[exercise.id] {
+                window.title = isNew ? "New Exercise" : "Edit: \(exercise.name)"
+            }
+         }
     }
     
     private func importText() {
@@ -187,12 +240,14 @@ struct ExerciseEditorView: View {
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let content = try String(contentsOf: url, encoding: .utf8)
-                self.exercise.text = content
+                self.bufferedText = content // MODIFIED: Update the buffer
                 if self.exercise.name.isEmpty { self.exercise.name = url.deletingPathExtension().lastPathComponent }
             } catch { print("Error reading file: \(error)") }
         }
     }
 }
+
+// ... (Rest of the file remains the same)
 
 struct RenameView: View {
     @EnvironmentObject var appState: AppState
@@ -236,7 +291,6 @@ class NSKeyCaptureView: NSView {
 struct ExerciseView: View {
     @EnvironmentObject var appState: AppState; @Environment(\.dismiss) var dismiss
     let exercise: Exercise; var textChars: [Character] { Array(exercise.text) }
-    // FIX: Corrected @State declarations
     @State private var typedText: [Character?] = []
     @State private var currentIndex: Int = 0
     @State private var errorCount: Int = 0
@@ -323,7 +377,6 @@ struct SettingsView: View {
     @State private var selectedThemeId: UUID; @State private var currentConfig: AppConfiguration
     @State private var fontSearchText: String = ""
     
-    // Get all available font families
     private var availableFonts: [String] { NSFontManager.shared.availableFontFamilies.sorted() }
     private var filteredFonts: [String] {
         if fontSearchText.isEmpty { return availableFonts }
@@ -345,15 +398,12 @@ struct SettingsView: View {
     
     var themeEditor: some View { Form {
         TextField("Name", text: selectedProxy.name)
-        
-        // NEW: SwiftUI Font Picker
         Picker("Font Family", selection: selectedProxy.fontName) {
             ForEach(filteredFonts, id: \.self) { fontName in
                 Text(fontName).font(.custom(fontName, size: 14))
             }
         }
         .searchable(text: $fontSearchText, prompt: "Search fonts")
-
         Stepper("Font Size: \(Int(selectedProxy.fontSize.wrappedValue))", value: selectedProxy.fontSize, in: 10...40)
         Divider().padding(.vertical)
         ColorPicker("BG",selection:Binding(get:{selectedProxy.backgroundColor.wrappedValue.color},set:{selectedProxy.backgroundColor.wrappedValue = .init(color:$0)}))
@@ -417,17 +467,11 @@ extension Color {
 }
 
 extension String {
-    /// Replaces various Unicode apostrophe-like characters with the standard single quote.
     func normalizingApostrophes() -> String {
         let replacements = [
-            "’": "'", // Right Single Quotation Mark (U+2019)
-            "‘": "'", // Left Single Quotation Mark (U+2018)
-            "´": "'", // Acute Accent (U+00B4)
-            "`": "'"  // Grave Accent (U+0060)
+            "’": "'", "‘": "'", "´": "'", "`": "'"
         ]
-        return replacements.reduce(self) { currentText, replacement in
-            currentText.replacingOccurrences(of: replacement.key, with: replacement.value)
-        }
+        return replacements.reduce(self) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
     }
 }
 let delegate = AppDelegate()
