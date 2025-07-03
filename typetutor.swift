@@ -143,12 +143,7 @@ struct MainView: View {
         
         // NEW: Proper handling of window close notification
         let cancellable = NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)
-            .sink { [weak appState, weak window] _ in // Capture window weakly
-                guard let strongWindow = window else { return } // Ensure window still exists
-                strongWindow.contentView = nil // Explicitly nil out contentView
-
-                // It's important that exerciseToEdit.id is captured correctly here.
-                // This ID was from the moment openExerciseEditor was called.
+            .sink { [weak appState] _ in
                 appState?.editorWindows.removeValue(forKey: exerciseToEdit.id)
                 appState?.editorCancellables.removeValue(forKey: exerciseToEdit.id)
             }
@@ -200,10 +195,17 @@ struct ExerciseEditorView: View {
     }
 
     private func closeWindow() {
-        // Find the window this view is in and close it
-        if let window = appState.editorWindows[exercise.id] {
-           window.close()
-        }
+        // Retrieve the window instance using the view's exercise.id
+        let windowToClose = appState.editorWindows[self.exercise.id]
+
+        // Remove the window from AppState's tracking
+        appState.editorWindows.removeValue(forKey: self.exercise.id)
+
+        // Remove and explicitly cancel the notification cancellable from AppState's tracking
+        appState.editorCancellables.removeValue(forKey: self.exercise.id)?.cancel()
+
+        // After cleanup in AppState, tell the window to close
+        windowToClose?.close()
     }
     
     var body: some View {
