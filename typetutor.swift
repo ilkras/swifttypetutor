@@ -221,7 +221,10 @@ struct ExerciseEditorView: View {
                     } else {
                         appState.updateExercise(exercise)
                     }
-                    closeWindow()
+                    // MODIFIED: Delay closing the window to allow current event processing to complete
+                    DispatchQueue.main.async {
+                        self.closeWindow()
+                    }
                 // MODIFIED: The disabled check now uses the buffered text and trims whitespace
                 }.disabled(exercise.name.trimmingCharacters(in: .whitespaces).isEmpty || bufferedText.isEmpty)
             }.padding([.bottom, .leading, .trailing])
