@@ -143,7 +143,12 @@ struct MainView: View {
         
         // NEW: Proper handling of window close notification
         let cancellable = NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)
-            .sink { [weak appState] _ in
+            .sink { [weak appState, weak window] _ in // Capture window weakly
+                guard let strongWindow = window else { return } // Ensure window still exists
+                strongWindow.contentView = nil // Explicitly nil out contentView
+
+                // It's important that exerciseToEdit.id is captured correctly here.
+                // This ID was from the moment openExerciseEditor was called.
                 appState?.editorWindows.removeValue(forKey: exerciseToEdit.id)
                 appState?.editorCancellables.removeValue(forKey: exerciseToEdit.id)
             }
@@ -221,10 +226,7 @@ struct ExerciseEditorView: View {
                     } else {
                         appState.updateExercise(exercise)
                     }
-                    // MODIFIED: Delay closing the window to allow current event processing to complete
-                    DispatchQueue.main.async {
-                        self.closeWindow()
-                    }
+                    closeWindow()
                 // MODIFIED: The disabled check now uses the buffered text and trims whitespace
                 }.disabled(exercise.name.trimmingCharacters(in: .whitespaces).isEmpty || bufferedText.isEmpty)
             }.padding([.bottom, .leading, .trailing])
