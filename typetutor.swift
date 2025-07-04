@@ -7,7 +7,7 @@
 
 import SwiftUI
 import Charts
-import UniformTypeIdentifiers // Added back
+import UniformTypeIdentifiers // <<<< CORRECTED: ENSURED THIS IS PRESENT
 import Combine
 
 // MARK: - 1. DATA MODELS
@@ -44,12 +44,15 @@ struct StorageService {
         if (try? FileManager.default.contentsOfDirectory(at: exercisesUrl, includingPropertiesForKeys: nil))?.isEmpty ?? true { saveExercise(Exercise(id: UUID(), name: "Pangram", text: "The quick brown fox jumps over the lazy dog.")) }
         return config
     }
-    func saveConfiguration(_ config: AppConfiguration) { let e=JSONEncoder(); e.outputFormatting = .prettyPrinted; do{try e.encode(config).write(to: configUrl, options: .atomic)}catch{print("E: \(error)")} }
+    func saveConfiguration(_ config: AppConfiguration) { let e=JSONEncoder(); e.outputFormatting = .prettyPrinted; do{try e.encode(config).write(to: configUrl, options: .atomic)}catch{print("E: \(error)")}
+}
     func loadExercises() -> [Exercise] { guard let urls = try? FileManager.default.contentsOfDirectory(at: exercisesUrl, includingPropertiesForKeys: nil) else { return [] }; return urls.compactMap { u in if u.pathExtension=="json", let d=try? Data(contentsOf:u){return try? JSONDecoder().decode(Exercise.self,from:d)}; return nil } }
-    func saveExercise(_ e: Exercise) { let enc=JSONEncoder(); enc.outputFormatting = .prettyPrinted; do{try enc.encode(e).write(to: exercisesUrl.appendingPathComponent("\(e.id.uuidString).json"), options: .atomic)}catch{print("E: \(error)")} }
+    func saveExercise(_ e: Exercise) { let enc=JSONEncoder(); enc.outputFormatting = .prettyPrinted; do{try enc.encode(e).write(to: exercisesUrl.appendingPathComponent("\(e.id.uuidString).json"), options: .atomic)}catch{print("E: \(error)")}
+}
     func deleteExercise(_ e: Exercise) { try? FileManager.default.removeItem(at: exercisesUrl.appendingPathComponent("\(e.id.uuidString).json")) }
     func loadHistory() -> [HistoryEntry] { guard let urls = try? FileManager.default.contentsOfDirectory(at: historyUrl, includingPropertiesForKeys: nil) else { return [] }; let d=JSONDecoder(); d.dateDecodingStrategy = .iso8601; return urls.compactMap { u in if u.pathExtension=="json", let data=try? Data(contentsOf:u){return try? d.decode(HistoryEntry.self,from:data)}; return nil } }
-    func saveHistoryEntry(_ h: HistoryEntry) { let e=JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = .prettyPrinted; do{try e.encode(h).write(to: historyUrl.appendingPathComponent("\(h.id.uuidString).json"),options: .atomic)}catch{print("E: \(error)")} }
+    func saveHistoryEntry(_ h: HistoryEntry) { let e=JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = .prettyPrinted; do{try e.encode(h).write(to: historyUrl.appendingPathComponent("\(h.id.uuidString).json"),options: .atomic)}catch{print("E: \(error)")}
+}
 }
 
 // MARK: - 3. APP STATE
@@ -57,11 +60,11 @@ struct StorageService {
 class AppState: ObservableObject {
     @Published var configuration: AppConfiguration; @Published var exercises: [Exercise]; @Published var history: [HistoryEntry]
     private let storage: StorageService
-    init() {
-        self.storage=StorageService();
-        self.configuration=storage.loadConfiguration();
-        self.exercises=storage.loadExercises();
-        self.history=storage.loadHistory()
+    init() { 
+        self.storage=StorageService(); 
+        self.configuration=storage.loadConfiguration(); 
+        self.exercises=storage.loadExercises(); 
+        self.history=storage.loadHistory() 
     }
     var currentTheme: Theme { configuration.themes.first { $0.id == configuration.lastUsedThemeId } ?? configuration.themes.first! }
     func saveConfig() { storage.saveConfiguration(configuration); objectWillChange.send() }
@@ -117,16 +120,16 @@ struct MainView: View {
     }
 
     private func openExerciseEditor(for exercise: Exercise?) {
-        let newExerciseId = UUID()
+        let newExerciseId = UUID() 
         let exerciseToEdit = exercise ?? Exercise(id: newExerciseId, name: "", text: "")
-        let idForLog = exerciseToEdit.id
+        let idForLog = exerciseToEdit.id 
         
         if let window = appState.editorWindows[idForLog] {
             window.makeKeyAndOrderFront(nil)
             return
         }
 
-        let editorView = ExerciseEditorView(exercise: exerciseToEdit)
+        let editorView = ExerciseEditorView(exercise: exerciseToEdit) 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 450),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -137,22 +140,22 @@ struct MainView: View {
         
         window.contentView = NSHostingView(rootView: editorView.environmentObject(appState))
         
-        appState.editorWindows[idForLog] = window
+        appState.editorWindows[idForLog] = window 
         
-        let capturedIdForNotification = idForLog
+        let capturedIdForNotification = idForLog 
         let cancellable = NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)
-            .sink { [weak appState] _ in
+            .sink { [weak appState] _ in 
                 let _ = appState?.editorWindows.removeValue(forKey: capturedIdForNotification)
                 let _ = appState?.editorCancellables.removeValue(forKey: capturedIdForNotification)
             }
-        appState.editorCancellables[idForLog] = cancellable
+        appState.editorCancellables[idForLog] = cancellable 
         
         window.makeKeyAndOrderFront(nil)
     }
     
     private func importFromFile() {
         let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false
-        if #available(macOS 11.0, *) { panel.allowedContentTypes = [UType.plainText] }
+        if #available(macOS 11.0, *) { panel.allowedContentTypes = [UType.plainText] } 
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let content = try String(contentsOf: url, encoding: .utf8)
@@ -174,8 +177,8 @@ struct ExerciseRowView: View {
 
 struct ExerciseEditorView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) var dismiss
-    @Environment(\.controlActiveState) var controlActiveState
+    @Environment(\.dismiss) var dismiss 
+    @Environment(\.controlActiveState) var controlActiveState 
     
     @State private var exercise: Exercise
     private let isNew: Bool
@@ -184,19 +187,19 @@ struct ExerciseEditorView: View {
     init(exercise: Exercise) {
         _exercise = State(initialValue: exercise)
         _bufferedText = State(initialValue: exercise.text)
-
+        
         let tempAppState = (NSApplication.shared.delegate as! AppDelegate).appState
         self.isNew = !tempAppState.exercises.contains(where: { $0.id == exercise.id })
     }
 
     private func closeWindow() {
         let windowToClose = appState.editorWindows[self.exercise.id]
-
+        
         let _ = appState.editorWindows.removeValue(forKey: self.exercise.id)
         appState.editorCancellables.removeValue(forKey: self.exercise.id)?.cancel()
 
         if let actualWindow = windowToClose {
-            DispatchQueue.main.async { // Keep async close from previous valid state
+            DispatchQueue.main.async { 
                 actualWindow.close()
             }
         }
@@ -238,11 +241,11 @@ struct ExerciseEditorView: View {
     
     private func importText() {
         let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false
-        if #available(macOS 11.0, *) { panel.allowedContentTypes = [UTType.plainText] }
+        if #available(macOS 11.0, *) { panel.allowedContentTypes = [UType.plainText] } 
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let content = try String(contentsOf: url, encoding: .utf8)
-                self.bufferedText = content
+                self.bufferedText = content 
                 if self.exercise.name.isEmpty { self.exercise.name = url.deletingPathExtension().lastPathComponent }
             } catch { print("Error reading file: \(error)") }
         }
@@ -289,26 +292,26 @@ struct KeyCaptureView: NSViewRepresentable {
 
 class NSKeyCaptureView: NSView {
     var onKeyPress: ((String) -> Void)?
-
+    
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
     }
-
+    
     required init?(coder: NSCoder) {
         super.init(coder: coder)
     }
-
+    
     deinit {}
 
     override var acceptsFirstResponder: Bool { true }
-
+    
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if self.window != nil {
             self.window?.makeFirstResponder(self)
         }
     }
-
+    
     override func keyDown(with event: NSEvent) {
         guard let chars = event.characters else { return }
         onKeyPress?(chars)
@@ -324,14 +327,14 @@ struct ExerciseView: View {
     @State private var startTime: Date? = nil
     @State private var currentTime = Date()
     @State private var mistakeLog: [String: Int] = [:]
-    @State private var persistentErrorChars: [Int: Character] = [:]
+    @State private var persistentErrorChars: [Int: Character] = [:] 
     @State private var isFinished = false
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 20) {
             StatsHeaderView(totalChars:textChars.count, errors:errorCount, typedChars:typedText.compactMap{$0}.count, startTime:startTime, currentTime:currentTime)
-            TypingAreaView(textChars: textChars, typedText: typedText, currentIndex: currentIndex, persistentErrorChars: persistentErrorChars)
+            TypingAreaView(textChars: textChars, typedText: typedText, currentIndex: currentIndex, persistentErrorChars: persistentErrorChars) 
             if isFinished { CompletionFooterView() }
         }
         .padding().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -340,32 +343,32 @@ struct ExerciseView: View {
         .onAppear {
             typedText = Array(repeating: nil, count: textChars.count)
             mistakeLog = [:]
-            persistentErrorChars = [:]
+            persistentErrorChars = [:] 
         }
         .onReceive(timer) { newTime in guard !isFinished else { return }; if startTime != nil { currentTime = newTime } }
     }
 
     private func handleInput(_ input: String) {
         guard !isFinished, let typedChar = input.first else { return }; if startTime == nil { startTime = Date() }
-        let correctChar = textChars[currentIndex];
+        let correctChar = textChars[currentIndex]; 
         var isMatch = (typedChar == correctChar)
         if correctChar.isNewline && (typedChar == "\r" || typedChar == "\n") { isMatch = true }
-
+        
         if isMatch {
-            typedText[currentIndex] = correctChar;
-            if currentIndex < textChars.count-1 {
-                currentIndex += 1
-            } else {
-                finishExercise()
+            typedText[currentIndex] = correctChar; 
+            if currentIndex < textChars.count-1 { 
+                currentIndex += 1 
+            } else { 
+                finishExercise() 
             }
         } else {
-            if typedText[currentIndex] == nil {
+            if typedText[currentIndex] == nil { 
                 errorCount += 1
                 let key = correctChar.isNewline ? "⏎" : String(correctChar)
                 mistakeLog[key, default: 0] += 1
-                persistentErrorChars[currentIndex] = typedChar
+                persistentErrorChars[currentIndex] = typedChar 
             }
-            typedText[currentIndex] = typedChar
+            typedText[currentIndex] = typedChar 
         }
     }
 
@@ -391,8 +394,8 @@ struct StatsHeaderView: View {
 
 // Helper struct for TypingAreaView
 struct CharacterDisplayInfo: Hashable, Identifiable {
-    let id = UUID() // For ForEach line
-    let charId: Int // Original index, for ForEach char
+    let id = UUID() // For ForEach line iteration
+    let charId: Int // Original index, for ForEach char iteration & persistentErrorChars key
     let displayString: String
     let mainColor: Color
     let isCursor: Bool
@@ -404,47 +407,47 @@ struct TypingAreaView: View {
     let textChars: [Character]
     let typedText: [Character?]
     let currentIndex: Int
-    let persistentErrorChars: [Int: Character]
+    let persistentErrorChars: [Int: Character] 
 
     private func buildDisplayLines() -> [[CharacterDisplayInfo]] {
         var lines: [[CharacterDisplayInfo]] = []
         var currentLine: [CharacterDisplayInfo] = []
         let theme = appState.currentTheme
 
-        if textChars.isEmpty { // Handle empty exercise gracefully
-            lines.append([CharacterDisplayInfo(charId: 0, displayString: " ", mainColor: .clear, isCursor: false, errorChar: nil)])
+        if textChars.isEmpty {
+            lines.append([CharacterDisplayInfo(charId: 0, displayString: " ", mainColor: .clear, isCursor: currentIndex == 0, errorChar: nil)])
             return lines
         }
 
         for i in 0..<textChars.count {
             let char = textChars[i]
-            var displayString = String(char)
+            var displayStr = String(char)
             var defaultColor = theme.defaultTextColor.color
 
             if char.isNewline {
-                displayString = "⏎"
+                displayStr = "⏎" 
                 defaultColor = theme.specialCharColor.color
             } else if char == "\t" {
-                displayString = "→"
+                displayStr = "→"
                 defaultColor = theme.specialCharColor.color
             }
 
-            var mainColor = defaultColor
+            var resolvedMainColor = defaultColor
             if i < typedText.count, let typedCharContent = typedText[i] {
-                mainColor = (typedCharContent == char || (char.isNewline && (typedCharContent == "\r" || typedCharContent == "\n"))) ?
-                            theme.correctTextColor.color :
+                resolvedMainColor = (typedCharContent == char || (char.isNewline && (typedCharContent == "\r" || typedCharContent == "\n"))) ? 
+                            theme.correctTextColor.color : 
                             theme.incorrectTextColor.color
             }
-
-            let isCursor = (i == currentIndex)
-            let errorDisplayChar = persistentErrorChars[i]
+            
+            let isCursorCell = (i == currentIndex)
+            let errorToDisplay = persistentErrorChars[i]
 
             currentLine.append(CharacterDisplayInfo(
-                charId: i, // Use original index as ID for char ForEach
-                displayString: displayString,
-                mainColor: mainColor,
-                isCursor: isCursor,
-                errorChar: errorDisplayChar
+                charId: i, 
+                displayString: displayStr,
+                mainColor: resolvedMainColor,
+                isCursor: isCursorCell,
+                errorChar: errorToDisplay
             ))
 
             if char.isNewline {
@@ -455,28 +458,38 @@ struct TypingAreaView: View {
         if !currentLine.isEmpty {
             lines.append(currentLine)
         }
-
+        
+        if lines.isEmpty && !textChars.isEmpty { // Handles single line text without a final newline
+             // This case should be covered by the !currentLine.isEmpty check above after the loop,
+             // but as a safeguard if currentLine was somehow cleared before this point for a non-empty textChars.
+            if !currentLine.isEmpty { // Ensure currentLine wasn't emptied if textChars had content but no newlines
+                 lines.append(currentLine)
+            } else { // This means textChars had content, no newlines, and currentLine is empty. Should not happen with current loop logic.
+                 // If it did, it implies an issue. For safety, reconstruct if necessary or add placeholder.
+            }
+        }
+        
         return lines
     }
 
-    var body: some View {
+    var body: some View { 
         ScrollView {
-            VStack(alignment: .leading, spacing: appState.currentTheme.fontSize * 0.5) { // Adjusted line spacing
-                ForEach(buildDisplayLines(), id: \.self) { line in // Line identified by its content
-                    HStack(spacing: 0) {
-                        ForEach(line, id: \.charId) { charInfo in // Char identified by original index
+            VStack(alignment: .leading, spacing: appState.currentTheme.fontSize * 0.5) { 
+                ForEach(buildDisplayLines(), id: \.self) { line in 
+                    HStack(spacing: 0) { 
+                        ForEach(line, id: \.charId) { charInfo in 
                             ZStack {
                                 Text(charInfo.displayString)
                                     .font(.custom(appState.currentTheme.fontName, size: appState.currentTheme.fontSize))
                                     .foregroundColor(charInfo.mainColor)
                                     .background(charInfo.isCursor ? appState.currentTheme.cursorColor.color : Color.clear)
-                                    .frame(minWidth: appState.currentTheme.fontSize / 2) // Ensure some min width for ZStack content
+                                    .frame(minWidth: appState.currentTheme.fontSize / 2.5) // Ensure min width for small chars like space, period
 
                                 if let errorChar = charInfo.errorChar {
                                     Text(String(errorChar))
                                         .font(.custom(appState.currentTheme.fontName, size: appState.currentTheme.fontSize * 0.8))
                                         .foregroundColor(appState.currentTheme.incorrectTextColor.color)
-                                        .offset(y: -appState.currentTheme.fontSize * 0.7)
+                                        .offset(y: -appState.currentTheme.fontSize * 0.7) 
                                 }
                             }
                         }
@@ -569,23 +582,23 @@ struct ProgressView: View {
 class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor let appState = AppState()
     var window: NSWindow!
-
+    
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
-
+        
         let view = MainView().environmentObject(appState)
         window = NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600), styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered, defer:false)
         window.center(); window.setFrameAutosaveName("MainAppWindow")
         window.contentView = NSHostingView(rootView: view)
         window.makeKeyAndOrderFront(nil)
-
+        
         NSApp.activate(ignoringOtherApps: true)
     }
-
+    
     func applicationWillTerminate(_ n: Notification) {
         appState.saveConfig()
     }
-
+    
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool {
         return true
     }
