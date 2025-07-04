@@ -7,7 +7,7 @@
 
 import SwiftUI
 import Charts
-import UniformTypeIdentifiers
+import UniformTypeIdentifiers // Added back
 import Combine
 
 // MARK: - 1. DATA MODELS
