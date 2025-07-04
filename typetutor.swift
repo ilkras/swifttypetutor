@@ -297,12 +297,13 @@ struct ExerciseView: View {
     @State private var startTime: Date? = nil
     @State private var currentTime = Date()
     @State private var mistakeLog: [String: Int] = [:]
+    @State private var persistentMistakes: [Int: Character] = [:]
     @State private var isFinished = false
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     var body: some View {
         VStack(spacing: 20) {
             StatsHeaderView(totalChars:textChars.count, errors:errorCount, typedChars:typedText.compactMap{$0}.count, startTime:startTime, currentTime:currentTime)
-            TypingAreaView(textChars: textChars, typedText: typedText, currentIndex: currentIndex)
+            TypingAreaView(textChars: textChars, typedText: typedText, currentIndex: currentIndex, persistentMistakes: persistentMistakes)
             if isFinished { CompletionFooterView() }
         }
         .padding().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -311,6 +312,7 @@ struct ExerciseView: View {
         .onAppear {
             typedText = Array(repeating: nil, count: textChars.count)
             mistakeLog = [:]
+            persistentMistakes = [:]
         }
         .onReceive(timer) { newTime in guard !isFinished else { return }; if startTime != nil { currentTime = newTime } }
     }
@@ -325,9 +327,12 @@ struct ExerciseView: View {
                 errorCount += 1
                 let key = correctChar.isNewline ? "⏎" : String(correctChar)
                 mistakeLog[key, default: 0] += 1
-            }; typedText[currentIndex] = typedChar
+            }
+            persistentMistakes[currentIndex] = typedChar
+            typedText[currentIndex] = typedChar
         }
     }
+
     private func finishExercise() {
         isFinished = true; let finalTime = Date(), elapsed = finalTime.timeIntervalSince(startTime!); let cpm = Int(Double(textChars.count)/elapsed*60), wpm = cpm/5
         let errPercent = Double(errorCount)/Double(textChars.count)*100; self.currentTime = finalTime
@@ -349,22 +354,101 @@ struct StatsHeaderView: View {
 }
 
 struct TypingAreaView: View {
-    @EnvironmentObject var appState: AppState; let textChars: [Character], typedText: [Character?], currentIndex: Int
-    var body: some View { ScrollView { Text(buildAttributedString()).padding().frame(maxWidth:.infinity, alignment:.leading).lineSpacing(appState.currentTheme.fontSize * 0.75) }.background(appState.currentTheme.backgroundColor.color.opacity(0.5)).cornerRadius(8) }
-    private func buildAttributedString() -> AttributedString {
-        var finalString = AttributedString(); let theme = appState.currentTheme
+    @EnvironmentObject var appState: AppState
+    let textChars: [Character]
+    let typedText: [Character?]
+    let currentIndex: Int
+    let persistentMistakes: [Int: Character]
+
+    var body: some View {
+        ScrollView {
+            ZStack(alignment: .topLeading) {
+                // Base text layer (correctly typed, untyped, and cursor)
+                Text(buildBaseAttributedString())
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineSpacing(appState.currentTheme.fontSize * 0.75)
+
+                // Mistakes layer (incorrect characters)
+                Text(buildMistakeAttributedString())
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineSpacing(appState.currentTheme.fontSize * 0.75)
+            }
+        }
+        .background(appState.currentTheme.backgroundColor.color.opacity(0.5))
+        .cornerRadius(8)
+    }
+
+    private func buildBaseAttributedString() -> AttributedString {
+        var finalString = AttributedString()
+        let theme = appState.currentTheme
+
         for i in 0..<textChars.count {
-            let char = textChars[i]; var displayChar = String(char); var container = AttributeContainer()
+            let correctChar = textChars[i]
+            var container = AttributeContainer()
             container.font = .custom(theme.fontName, size: theme.fontSize)
-            if char.isNewline { displayChar = "⏎\n" }; if char == "\t" { displayChar = "→" }; if char.isNewline || char == "\t" { container.foregroundColor = theme.specialCharColor.nsColor }
-            var styledChar = AttributedString(displayChar, attributes: container)
-            if i < typedText.count, let typedChar = typedText[i] {
-                var color = typedChar == char ? theme.correctTextColor.nsColor : theme.incorrectTextColor.nsColor
-                if char.isNewline && (typedChar == "\r" || typedChar == "\n") { color = theme.correctTextColor.nsColor }
-                styledChar.foregroundColor = color
-            } else { if !char.isNewline && char != "\t" { styledChar.foregroundColor = theme.defaultTextColor.nsColor } }
-            if i == currentIndex { styledChar.backgroundColor = theme.cursorColor.nsColor }
-            finalString.append(styledChar)
+
+            let isTyped = i < typedText.count && typedText[i] != nil
+            let isCorrect = isTyped && (typedText[i] == correctChar || (correctChar.isNewline && (typedText[i] == "\r" || typedText[i] == "\n")))
+
+            if isCorrect {
+                container.foregroundColor = theme.correctTextColor.nsColor
+            } else {
+                if correctChar.isNewline || correctChar == "\t" {
+                    container.foregroundColor = theme.specialCharColor.nsColor
+                } else {
+                    container.foregroundColor = theme.defaultTextColor.nsColor
+                }
+            }
+
+            if i == currentIndex {
+                container.backgroundColor = theme.cursorColor.nsColor
+            }
+
+            var displayString = String(correctChar)
+            if correctChar.isNewline { displayString = "⏎\n" }
+            if correctChar == "\t" { displayString = "→" }
+
+            finalString.append(AttributedString(displayString, attributes: container))
+        }
+        return finalString
+    }
+
+    private func buildMistakeAttributedString() -> AttributedString {
+        var finalString = AttributedString()
+        let theme = appState.currentTheme
+
+        for i in 0..<textChars.count {
+            let correctChar = textChars[i]
+            var container = AttributeContainer()
+            container.font = .custom(theme.fontName, size: theme.fontSize)
+
+            var displayChar: Character? = nil
+
+            if let mistakeChar = persistentMistakes[i] {
+                displayChar = mistakeChar
+                container.foregroundColor = theme.incorrectTextColor.nsColor
+                container.baselineOffset = theme.fontSize * 0.4
+            } else if i < typedText.count, let typedChar = typedText[i], typedChar != correctChar {
+                 displayChar = typedChar
+                 container.foregroundColor = theme.incorrectTextColor.nsColor
+                 container.baselineOffset = theme.fontSize * 0.4
+            }
+
+
+            if let charToDraw = displayChar {
+                var displayString = String(charToDraw)
+                if charToDraw.isNewline { displayString = "⏎\n" }
+                if charToDraw == "\t" { displayString = "→" }
+                finalString.append(AttributedString(displayString, attributes: container))
+            } else {
+                var invisibleString = String(correctChar)
+                if correctChar.isNewline { invisibleString = " \n" }
+                if correctChar == "\t" { invisibleString = " " }
+                container.foregroundColor = .clear
+                finalString.append(AttributedString(invisibleString, attributes: container))
+            }
         }
         return finalString
     }
